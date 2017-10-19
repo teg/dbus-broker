@@ -32,8 +32,15 @@ enum {
         MAIN_FAILED,
 };
 
+typedef enum {
+        SERVICE_STATE_PENDING,
+        SERVICE_STATE_CURRENT,
+        SERVICE_STATE_DEFUNCT,
+} ServiceState;
+
 struct Service {
         Manager *manager;
+        ServiceState state;
         sd_bus_slot *slot;
         CRBNode rb;
         CRBNode rb_by_name;
@@ -114,28 +121,10 @@ static Service *service_free(Service *service) {
 
 C_DEFINE_CLEANUP(Service *, service_free);
 
-static int service_new(Service **servicep,
-                       Manager *manager,
-                       const char *name,
-                       CRBNode **slot_by_name,
-                       CRBNode *parent_by_name,
-                       const char *unit,
-                       char **exec,
-                       size_t n_exec) {
-        _c_cleanup_(service_freep) Service *service = NULL;
-        CRBNode **slot, *parent;
-
-        service = calloc(1, sizeof(*service) + C_DECIMAL_MAX(uint64_t) + 1);
-        if (!service)
-                return error_origin(-ENOMEM);
-
-        service->manager = manager;
-        service->rb = (CRBNode)C_RBNODE_INIT(service->rb);
-        sprintf(service->id, "%" PRIu64, ++manager->service_ids);
-
-        service->name = strdup(name);
-        if (!service->name)
-                return error_origin(-ENOMEM);
+static int service_update(Service *service, const char *unit, char **exec, size_t n_exec) {
+        service->unit = c_free(service->unit);
+        service->exec = c_free(service->exec);
+        service->n_exec = 0;
 
         if (unit) {
                 service->unit = strdup(unit);
@@ -156,6 +145,37 @@ static int service_new(Service **servicep,
                                 return error_origin(-ENOMEM);
                 }
         }
+
+        return 0;
+}
+
+static int service_new(Service **servicep,
+                       Manager *manager,
+                       const char *name,
+                       CRBNode **slot_by_name,
+                       CRBNode *parent_by_name,
+                       const char *unit,
+                       char **exec,
+                       size_t n_exec) {
+        _c_cleanup_(service_freep) Service *service = NULL;
+        CRBNode **slot, *parent;
+        int r;
+
+        service = calloc(1, sizeof(*service) + C_DECIMAL_MAX(uint64_t) + 1);
+        if (!service)
+                return error_origin(-ENOMEM);
+
+        service->manager = manager;
+        service->rb = (CRBNode)C_RBNODE_INIT(service->rb);
+        sprintf(service->id, "%" PRIu64, ++manager->service_ids);
+
+        service->name = strdup(name);
+        if (!service->name)
+                return error_origin(-ENOMEM);
+
+        r = service_update(service, unit, exec, n_exec);
+        if (r)
+                return error_trace(r);
 
         slot = c_rbtree_find_slot(&manager->services, service_compare, service->id, &parent);
         assert(slot);
@@ -187,6 +207,19 @@ static Manager *manager_free(Manager *manager) {
 
 C_DEFINE_CLEANUP(Manager *, manager_free);
 
+static int manager_reload_config(Manager *manager);
+
+static int manager_on_sighup(sd_event_source *s, const struct signalfd_siginfo *si, void *userdata) {
+        Manager *manager = userdata;
+        int r;
+
+        r = manager_reload_config(manager);
+        if (r)
+                return error_fold(r);
+
+        return 1;
+}
+
 static int manager_new(Manager **managerp) {
         _c_cleanup_(manager_freep) Manager *manager = NULL;
         int r;
@@ -206,6 +239,10 @@ static int manager_new(Manager **managerp) {
                 return error_origin(r);
 
         r = sd_event_add_signal(manager->event, NULL, SIGINT, NULL, NULL);
+        if (r < 0)
+                return error_origin(r);
+
+        r = sd_event_add_signal(manager->event, NULL, SIGHUP, manager_on_sighup, manager);
         if (r < 0)
                 return error_origin(r);
 
@@ -743,8 +780,15 @@ static int manager_load_service_file(Manager *manager, const char *path) {
                         goto exit;
                 }
         } else {
-                fprintf(stderr, "Ignoring duplicate name '%s' in service file '%s'\n", name, path);
-                r = 0;
+                if (service->state == SERVICE_STATE_DEFUNCT) {
+                        service->state = SERVICE_STATE_CURRENT;
+                        r = service_update(service, unit, exec, n_exec);
+                        if (r)
+                                r = error_trace(r);
+                } else {
+                        fprintf(stderr, "Ignoring duplicate name '%s' in service file '%s'\n", name, path);
+                        r = 0;
+                }
                 goto exit;
         }
 
@@ -815,6 +859,9 @@ static int manager_add_services(Manager *manager) {
         c_rbtree_for_each_entry(service, &manager->services, rb) {
                 _c_cleanup_(c_freep) char *object_path = NULL;
 
+                if (service->state != SERVICE_STATE_PENDING)
+                        continue;
+
                 r = asprintf(&object_path, "/org/bus1/DBus/Name/%s", service->id);
                 if (r < 0)
                         return error_origin(-ENOMEM);
@@ -832,6 +879,39 @@ static int manager_add_services(Manager *manager) {
                                        0);
                 if (r < 0)
                         return error_origin(r);
+
+                service->state = SERVICE_STATE_CURRENT;
+        }
+
+        return 0;
+}
+
+static int manager_remove_services(Manager *manager) {
+        Service *service, *service_safe;
+        int r;
+
+        c_rbtree_for_each_entry_unlink(service, service_safe, &manager->services, rb) {
+                _c_cleanup_(c_freep) char *object_path = NULL;
+
+                if (service->state != SERVICE_STATE_DEFUNCT)
+                        continue;
+
+                r = asprintf(&object_path, "/org/bus1/DBus/Name/%s", service->id);
+                if (r < 0)
+                        return error_origin(-ENOMEM);
+
+                r = sd_bus_call_method(manager->bus_controller,
+                                       NULL,
+                                       object_path,
+                                       "org.bus1.DBus.Name",
+                                       "Release",
+                                       NULL,
+                                       NULL,
+                                       "");
+                if (r < 0)
+                        return error_origin(r);
+
+                service_free(service);
         }
 
         return 0;
@@ -990,6 +1070,61 @@ static int manager_add_listener(Manager *manager, Policy *policy) {
         return 0;
 }
 
+static int manager_reset_policy(Manager *manager, Policy *policy) {
+        _c_cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        int r;
+
+        r = sd_bus_message_new_method_call(manager->bus_controller,
+                                           &m,
+                                           NULL,
+                                           "/org/bus1/DBus/Listener/0",
+                                           "org.bus1.DBus.Listener",
+                                           "SetPolicy");
+        if (r < 0)
+                return error_origin(r);
+
+        r = policy_export(policy, m);
+        if (r)
+                return error_fold(r);
+
+        r = sd_bus_call(manager->bus_controller, m, 0, NULL, NULL);
+        if (r < 0)
+                return error_origin(r);
+
+        return 0;
+}
+
+static int manager_reload_config(Manager *manager) {
+        _c_cleanup_(policy_deinit) Policy policy = POLICY_INIT(policy);
+        Service *service;
+        int r;
+
+        c_rbtree_for_each_entry(service, &manager->services, rb)
+                service->state = SERVICE_STATE_DEFUNCT;
+
+        r = manager_load_services(manager);
+        if (r)
+                return error_trace(r);
+
+        r = manager_load_policy(manager, &policy);
+        if (r)
+                return error_trace(r);
+
+        r = manager_remove_services(manager);
+        if (r)
+                return error_trace(r);
+
+        r = manager_reset_policy(manager, &policy);
+        if (r)
+                return error_trace(r);
+
+        r = manager_add_services(manager);
+        if (r)
+                return error_trace(r);
+
+        return 0;
+}
+
 static int manager_connect(Manager *manager) {
         _c_cleanup_(bus_close_unrefp) sd_bus *b = NULL;
         _c_cleanup_(c_closep) int s = -1;
@@ -1071,11 +1206,11 @@ static int manager_run(Manager *manager) {
         if (r)
                 return error_trace(r);
 
-        r = manager_add_services(manager);
+        r = manager_load_policy(manager, &policy);
         if (r)
                 return error_trace(r);
 
-        r = manager_load_policy(manager, &policy);
+        r = manager_add_services(manager);
         if (r)
                 return error_trace(r);
 
@@ -1296,6 +1431,7 @@ int main(int argc, char **argv) {
         sigaddset(&mask_new, SIGCHLD);
         sigaddset(&mask_new, SIGTERM);
         sigaddset(&mask_new, SIGINT);
+        sigaddset(&mask_new, SIGHUP);
 
         sigprocmask(SIG_BLOCK, &mask_new, &mask_old);
         r = run();
