@@ -92,8 +92,12 @@ static int match_keys_assign(MatchKeys *keys, const char *key, size_t n_key, con
 
                 if (match_key_equal("", key, n_key)) {
                         keys->filter.args[i] = value;
+                        if (i + 1 > keys->filter.n_args)
+                                keys->filter.n_args = i + 1;
                 } else if (match_key_equal("path", key, n_key)) {
                         keys->filter.argpaths[i] = value;
+                        if (i + 1 > keys->filter.n_argpaths)
+                                keys->filter.n_argpaths = i + 1;
                 } else
                         return MATCH_E_INVALID;
         } else {
@@ -290,15 +294,6 @@ static bool match_string_prefix(const char *string, const char *prefix, char del
 }
 
 static bool match_keys_match_filter(MatchKeys *keys, MatchFilter *filter) {
-        if (keys->filter.type != DBUS_MESSAGE_TYPE_INVALID && keys->filter.type != filter->type)
-                return false;
-
-        if (keys->filter.destination != ADDRESS_ID_INVALID && keys->filter.destination != filter->destination)
-                return false;
-
-        if (keys->filter.sender != ADDRESS_ID_INVALID && keys->filter.sender != filter->sender)
-                return false;
-
         if (keys->filter.interface && !c_string_equal(keys->filter.interface, filter->interface))
                 return false;
 
@@ -315,7 +310,7 @@ static bool match_keys_match_filter(MatchKeys *keys, MatchFilter *filter) {
         if (keys->arg0namespace && !match_string_prefix(filter->args[0], keys->arg0namespace, '.', false))
                 return false;
 
-        for (unsigned int i = 0; i < C_ARRAY_SIZE(filter->args); i ++) {
+        for (unsigned int i = 0; i < keys->filter.n_args || i < keys->filter.n_argpaths; i ++) {
                 if (keys->filter.args[i] && !c_string_equal(keys->filter.args[i], filter->args[i]))
                         return false;
 
@@ -325,6 +320,15 @@ static bool match_keys_match_filter(MatchKeys *keys, MatchFilter *filter) {
                                 return false;
                 }
         }
+
+        if (keys->filter.type != DBUS_MESSAGE_TYPE_INVALID && keys->filter.type != filter->type)
+                return false;
+
+        if (keys->filter.destination != ADDRESS_ID_INVALID && keys->filter.destination != filter->destination)
+                return false;
+
+        if (keys->filter.sender != ADDRESS_ID_INVALID && keys->filter.sender != filter->sender)
+                return false;
 
         return true;
 }
