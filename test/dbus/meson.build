@@ -36,7 +36,8 @@ dep_test = declare_dependency(
 # target: tool-*
 #
 
-tool_flood = executable('tool-flood', ['tool-flood.c'], dependencies: [ dep_test ])
+tool_flood_replies = executable('tool-flood-replies', ['tool-flood-replies.c'], dependencies: [ dep_test ])
+tool_flood_bytes = executable('tool-flood-bytes', ['tool-flood-bytes.c'], dependencies: [ dep_test ])
 
 #
 # target: bench-*

@@ -36,6 +36,15 @@ static const CDVarType test_type_empty[] = {
         )
 };
 
+static const CDVarType test_type_payload[] = {
+        C_DVAR_T_INIT(
+                C_DVAR_T_TUPLE2(
+                        C_DVAR_T_TUPLE0,
+                        C_DVAR_T_s
+                )
+        )
+};
+
 static void test_message_append(void **buf, size_t *n_buf, const void *data, size_t n_data) {
         char *p;
 
@@ -63,7 +72,8 @@ static void test_cdvar_message_header(CDVar *var,
                                       const char *destination,
                                       const char *path,
                                       const char *interface,
-                                      const char *member) {
+                                      const char *member,
+                                      const char *signature) {
         assert(serial);
 
         c_dvar_write(var, "((yyyyuu[",
@@ -93,6 +103,10 @@ static void test_cdvar_message_header(CDVar *var,
                 c_dvar_write(var, "(y<s>)",
                              DBUS_MESSAGE_FIELD_MEMBER, c_dvar_type_s, member);
 
+        if (signature)
+                c_dvar_write(var, "(y<g>)",
+                             DBUS_MESSAGE_FIELD_SIGNATURE, c_dvar_type_g, signature);
+
         c_dvar_write(var, "])())");
 }
 
@@ -112,7 +126,8 @@ void test_message_append_hello(void **buf, size_t *n_buf) {
                                   "org.freedesktop.DBus",
                                   "/org/freedesktop/DBus",
                                   "org.freedesktop.DBus",
-                                  "Hello");
+                                  "Hello",
+                                  NULL);
 
         r = c_dvar_end_write(&var, &hello, &n_hello);
         assert(!r);
@@ -145,7 +160,8 @@ void test_message_append_broadcast(void **buf,
                                   NULL,
                                   "/org/example/Foo",
                                   "org.example.Bar",
-                                  "Baz");
+                                  "Baz",
+                                  NULL);
 
         r = c_dvar_end_write(&var, &broadcast, &n_broadcast);
         assert(!r);
@@ -177,7 +193,8 @@ void test_message_append_ping2(void **buf,
                                   destination,
                                   "/org/freedesktop/DBus",
                                   "org.freedesktop.DBus.Peer",
-                                  "Ping");
+                                  "Ping",
+                                  NULL);
 
         r = c_dvar_end_write(&var, &ping, &n_ping);
         assert(!r);
@@ -238,6 +255,7 @@ void test_message_append_pong(void **buf,
                                   destination,
                                   NULL,
                                   NULL,
+                                  NULL,
                                   NULL);
 
         r = c_dvar_end_write(&var, &pong, &n_pong);
@@ -253,11 +271,12 @@ void test_message_append_pong(void **buf,
 
 void test_message_append_signal(void **buf,
                                 size_t *n_buf,
+                                const char *payload,
                                 uint64_t sender_id,
                                 uint64_t destination_id) {
-        CDVar var = C_DVAR_INIT;
-        void *signal;
-        size_t n_signal;
+        CDVar var_header = C_DVAR_INIT;
+        void *header;
+        size_t n_header;
         char *sender;
         char *destination;
         int r;
@@ -268,9 +287,9 @@ void test_message_append_signal(void **buf,
         r = asprintf(&destination, ":1.%"PRIu64, destination_id);
         assert(r >= 0);
 
-        c_dvar_begin_write(&var, (__BYTE_ORDER == __BIG_ENDIAN), test_type_empty, 1);
+        c_dvar_begin_write(&var_header, (__BYTE_ORDER == __BIG_ENDIAN), test_type_empty, 1);
 
-        test_cdvar_message_header(&var,
+        test_cdvar_message_header(&var_header,
                                   DBUS_MESSAGE_TYPE_SIGNAL,
                                   -1,
                                   0,
@@ -278,15 +297,34 @@ void test_message_append_signal(void **buf,
                                   destination,
                                   "/org/example/Foo",
                                   "org.examelp.Bar",
-                                  "Baz");
+                                  "Baz",
+                                  payload ? "s" : NULL);
 
-        r = c_dvar_end_write(&var, &signal, &n_signal);
+        r = c_dvar_end_write(&var_header, &header, &n_header);
         assert(!r);
 
-        test_message_append(buf, n_buf, signal, n_signal);
+        test_message_append(buf, n_buf, header, n_header);
+
+        if (payload) {
+                CDVar var_payload = C_DVAR_INIT;
+                void *payload_marshalled;
+                size_t n_payload_marshalled;
+
+                c_dvar_begin_write(&var_payload, (__BYTE_ORDER == __BIG_ENDIAN), test_type_payload, 1);
+
+                c_dvar_write(&var_payload, "(()s)", payload);
+
+                r = c_dvar_end_write(&var_payload, &payload_marshalled, &n_payload_marshalled);
+                assert(!r);
+
+                test_message_append(buf, n_buf, payload_marshalled, n_payload_marshalled);
+
+                free(payload_marshalled);
+                c_dvar_deinit(&var_payload);
+        }
 
         free(destination);
         free(sender);
-        free(signal);
-        c_dvar_deinit(&var);
+        free(header);
+        c_dvar_deinit(&var_header);
 }

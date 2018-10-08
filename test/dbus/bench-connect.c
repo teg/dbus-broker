@@ -89,7 +89,7 @@ static void test_transaction(void) {
 
         test_message_append_sasl(&buf, &n_buf);
         test_message_append_hello(&buf, &n_buf);
-        test_message_append_signal(&buf, &n_buf, 1, 1);
+        test_message_append_signal(&buf, &n_buf, NULL, 1, 1);
 
         for (unsigned int i = 0; i < TEST_N_ITERATIONS; ++i)
                 test_connect_one(&metrics, buf, n_buf, 436);

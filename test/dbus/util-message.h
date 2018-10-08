@@ -13,6 +13,7 @@ void test_message_append_broadcast(void **buf,
                                    uint64_t sender_id);
 void test_message_append_signal(void **buf,
                                 size_t *n_buf,
+                                const char *payload,
                                 uint64_t sender_id,
                                 uint64_t destination_id);
 void test_message_append_ping(void **buf,

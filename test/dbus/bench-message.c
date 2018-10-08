@@ -112,7 +112,7 @@ static void test_broadcast(void) {
                 size_t n_buf = 0;
 
                 test_message_append_broadcast(&buf, &n_buf, 1);
-                test_message_append_signal(&buf, &n_buf, 1, 1);
+                test_message_append_signal(&buf, &n_buf, NULL, 1, 1);
 
                 test_message_transaction(&metrics, 1 << j, 0, buf, n_buf, 120);
 
