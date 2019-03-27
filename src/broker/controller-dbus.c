@@ -86,6 +86,16 @@ static const CDVarType controller_type_out_unit[] = {
                 )
         )
 };
+static const CDVarType controller_type_out_ss[] = {
+        C_DVAR_T_INIT(
+                CONTROLLER_T_MESSAGE(
+                        C_DVAR_T_TUPLE2(
+                                C_DVAR_T_s,
+                                C_DVAR_T_s
+                        )
+                )
+        )
+};
 
 static void controller_dvar_write_signature_out(CDVar *var, const CDVarType *type) {
         char signature[C_DVAR_TYPE_LENGTH_MAX + 1];
@@ -304,7 +314,7 @@ static int controller_method_name_release(Controller *controller, const char *pa
         if (!name)
                 return CONTROLLER_E_NAME_NOT_FOUND;
 
-        r = controller_name_reset(name);
+        r = controller_name_reset(name, NULL, NULL);
         if (r)
                 return error_trace(r);
 
@@ -352,9 +362,10 @@ static int controller_method_listener_set_policy(Controller *controller, const c
 
 static int controller_method_name_reset(Controller *controller, const char *path, CDVar *in_v, FDList *fds, CDVar *out_v) {
         ControllerName *name;
+        const char *error, *message;
         int r;
 
-        c_dvar_read(in_v, "()");
+        c_dvar_read(in_v, "(ss)", &error, &message);
 
         r = controller_end_read(in_v);
         if (r)
@@ -364,7 +375,7 @@ static int controller_method_name_reset(Controller *controller, const char *path
         if (!name)
                 return CONTROLLER_E_NAME_NOT_FOUND;
 
-        r = controller_name_reset(name);
+        r = controller_name_reset(name, error, message);
         if (r)
                 return error_trace(r);
 
@@ -457,7 +468,7 @@ static int controller_dispatch_controller(Controller *controller, uint32_t seria
 
 static int controller_dispatch_name(Controller *controller, uint32_t serial, const char *method, const char *path, const char *signature, Message *message) {
         static const ControllerMethod methods[] = {
-                { "Reset",      controller_method_name_reset,   c_dvar_type_unit,       controller_type_out_unit },
+                { "Reset",      controller_method_name_reset,   c_dvar_type_unit,       controller_type_out_ss },
                 { "Release",    controller_method_name_release, c_dvar_type_unit,       controller_type_out_unit },
         };
 

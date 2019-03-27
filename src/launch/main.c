@@ -543,7 +543,6 @@ static int manager_start_unit_handler(sd_bus_message *message, void *userdata, s
         if (r < 0)
                 return error_origin(-errno);
 
-        /* XXX: We should forward error-information to the activator. */
         r = sd_bus_call_method(service->manager->bus_controller,
                                NULL,
                                object_path,
@@ -551,7 +550,9 @@ static int manager_start_unit_handler(sd_bus_message *message, void *userdata, s
                                "Reset",
                                NULL,
                                NULL,
-                               "");
+                               "ss",
+                               error->name,
+                               error->message);
         if (r < 0)
                 return error_origin(r);
 

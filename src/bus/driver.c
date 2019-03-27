@@ -704,7 +704,7 @@ static int driver_name_owner_changed(Bus *bus, MatchRegistry *matches, const cha
         return 0;
 }
 
-int driver_name_activation_failed(Bus *bus, Activation *activation) {
+int driver_name_activation_failed(Bus *bus, Activation *activation, const char *error_name, const char *error_message) {
         ActivationRequest *request, *request_safe;
         ActivationMessage *message, *message_safe;
         int r;
@@ -717,7 +717,10 @@ int driver_name_activation_failed(Bus *bus, Activation *activation) {
 
                 sender = peer_registry_find_peer(&bus->peers, request->sender_id);
                 if (sender) {
-                        r = driver_send_error(sender, request->serial, "org.freedesktop.DBus.Error.ServiceUnknown", "Could not activate remote peer.");
+                        r = driver_send_error(sender,
+                                              request->serial,
+                                              error_name ?: "org.freedesktop.DBus.Error.ServiceUnknown",
+                                              error_message ?: "Could not activate remote peer.");
                         if (r)
                                 return error_trace(r);
                 }
@@ -730,7 +733,10 @@ int driver_name_activation_failed(Bus *bus, Activation *activation) {
 
                 sender = peer_registry_find_peer(&bus->peers, message->message->metadata.sender_id);
                 if (sender) {
-                        r = driver_send_error(sender, message_read_serial(message->message), "org.freedesktop.DBus.Error.NameHasNoOwner", "Could not activate remote peer.");
+                        r = driver_send_error(sender,
+                                              message_read_serial(message->message),
+                                              error_name ?: "org.freedesktop.DBus.Error.NameHasNoOwner",
+                                              error_message ?: "Could not activate remote peer.");
                         if (r)
                                 return error_trace(r);
                 }

@@ -65,10 +65,10 @@ static int controller_name_new(ControllerName **namep, Controller *controller, c
 /**
  * controller_name_reset() - XXX
  */
-int controller_name_reset(ControllerName *name) {
+int controller_name_reset(ControllerName *name, const char *error_name, const char *error_message) {
         int r;
 
-        r = driver_name_activation_failed(&name->controller->broker->bus, &name->activation);
+        r = driver_name_activation_failed(&name->controller->broker->bus, &name->activation, error_name, error_message);
         if (r)
                 return error_fold(r);
 
